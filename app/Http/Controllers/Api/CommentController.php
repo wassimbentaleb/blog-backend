@@ -83,13 +83,53 @@ class CommentController extends Controller
     // Admin: Get all comments (for moderation)
     public function adminIndex(Request $request)
     {
+        // Validate query parameters
+        $validated = $request->validate([
+            'search' => 'nullable|string|max:255',
+            'status' => 'nullable|string|in:all,pending,approved',
+            'page' => 'nullable|integer|min:1',
+            'per_page' => 'nullable|integer|min:1|max:100',
+        ]);
+
         $query = Comment::with(['post', 'user']);
 
-        if ($request->has('is_approved')) {
-            $query->where('is_approved', $request->boolean('is_approved'));
+        // Apply multi-field search
+        if ($request->filled('search')) {
+            $search = $request->search;
+
+            $query->where(function($q) use ($search) {
+                // Search in comment content
+                $q->where('content', 'like', '%' . $search . '%')
+                  // Search in guest author name
+                  ->orWhere('author_name', 'like', '%' . $search . '%')
+                  // Search in guest author email
+                  ->orWhere('author_email', 'like', '%' . $search . '%')
+                  // Search in registered user's name
+                  ->orWhereHas('user', function($subQ) use ($search) {
+                      $subQ->where('name', 'like', '%' . $search . '%');
+                  })
+                  // Search in post title
+                  ->orWhereHas('post', function($subQ) use ($search) {
+                      $subQ->where('title', 'like', '%' . $search . '%');
+                  });
+            });
         }
 
-        $comments = $query->orderBy('created_at', 'desc')->paginate(20);
+        // Apply status filter
+        if ($request->filled('status') && $request->status !== 'all') {
+            if ($request->status === 'pending') {
+                $query->where('is_approved', false);
+            } elseif ($request->status === 'approved') {
+                $query->where('is_approved', true);
+            }
+        }
+
+        // Order by newest first
+        $query->orderBy('created_at', 'desc');
+
+        // Paginate with custom per_page
+        $perPage = $request->input('per_page', 20);
+        $comments = $query->paginate($perPage);
 
         return response()->json($comments);
     }

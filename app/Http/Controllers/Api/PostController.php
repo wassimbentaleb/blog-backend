@@ -12,10 +12,19 @@ class PostController extends Controller
     // Public: Get all published posts
     public function index(Request $request)
     {
+        // Validate query parameters
+        $validated = $request->validate([
+            'page' => 'nullable|integer|min:1',
+            'per_page' => 'nullable|integer|min:1|max:100',
+        ]);
+
+        // Get per_page parameter, default to 9 for homepage grid (3x3)
+        $perPage = $request->input('per_page', 9);
+
         $posts = Post::published()
             ->with(['category', 'user'])
             ->orderBy('published_at', 'desc')
-            ->paginate(12);
+            ->paginate($perPage);
 
         return response()->json($posts);
     }
@@ -85,17 +94,40 @@ class PostController extends Controller
     // Admin: Get all posts (including drafts)
     public function adminIndex(Request $request)
     {
+        // Validate query parameters
+        $validated = $request->validate([
+            'search' => 'nullable|string|max:255',
+            'status' => 'nullable|string|in:all,published,draft',
+            'category' => 'nullable|string|max:255',
+            'page' => 'nullable|integer|min:1',
+            'per_page' => 'nullable|integer|min:1|max:100',
+        ]);
+
         $query = Post::with(['category', 'user']);
 
-        if ($request->has('status')) {
-            $query->where('status', $request->status);
-        }
-
-        if ($request->has('search')) {
+        // Apply search filter
+        if ($request->filled('search')) {
             $query->where('title', 'like', '%' . $request->search . '%');
         }
 
-        $posts = $query->orderBy('created_at', 'desc')->paginate(20);
+        // Apply status filter
+        if ($request->filled('status') && $request->status !== 'all') {
+            $query->where('status', $request->status);
+        }
+
+        // Apply category filter
+        if ($request->filled('category') && $request->category !== 'all') {
+            $query->whereHas('category', function($q) use ($request) {
+                $q->where('name', $request->category);
+            });
+        }
+
+        // Order by newest first
+        $query->orderBy('created_at', 'desc');
+
+        // Paginate with custom per_page
+        $perPage = $request->input('per_page', 10);
+        $posts = $query->paginate($perPage);
 
         return response()->json($posts);
     }
